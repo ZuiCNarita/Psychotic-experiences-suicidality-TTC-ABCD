@@ -1,0 +1,336 @@
+library(geepack)
+library(multcomp)
+library(boot)
+
+dat <- read.csv("imputed_data.csv", fileEncoding = "CP932")
+
+# Number of bootstrap
+num_bootstraps <- 1000
+
+### ple
+## ideationlife
+# Groups
+contrasts <- c("11_vs_00", "10_vs_00", "01_vs_00")
+scenarios <- list(
+  "11" = c(pleT1 = 1, pleT2 = 1),
+  "10" = c(pleT1 = 1, pleT2 = 0),
+  "01" = c(pleT1 = 0, pleT2 = 1),
+  "00" = c(pleT1 = 0, pleT2 = 0)
+)
+
+# Confounders
+t1_confounders <- "age + girl + iqT1 + bmiT1 + incomeT1 + living_arrangeT1 +
+    cohesionT1 + cbcl_lonelyT1 + sdqbulliedT1 + adhdT1 + ideationlifeT1"
+
+t2_confounders <- "bmiT2 + sdqbulliedT2 + ideationlifeT2"
+
+
+# Simulation
+nice_gformula_estimator <- function(dat) {
+  
+  # Step 1: Models for time-varying confounders at T2
+  model_bmiT2 <- glm(
+    as.formula(paste("bmiT2 ~ pleT1 +", t1_confounders)),
+    family = gaussian,
+    data = dat
+  )
+  
+  model_sdqbulliedT2 <- glm(
+    as.formula(paste("sdqbulliedT2 ~ pleT1 +", t1_confounders)),
+    family = binomial,
+    data = dat
+  )
+  
+  model_ideationlifeT2 <- glm(
+    as.formula(paste("ideationlifeT2 ~ pleT1 +", t1_confounders)),
+    family = binomial,
+    data = dat
+  )
+  
+  # Step 2: Outcome model
+  outcome_model <- glm(
+    as.formula(paste(
+      "ideationlifeT3 ~ pleT1 * pleT2 +",
+      t1_confounders,
+      "+",
+      t2_confounders
+    )),
+    family = binomial(link = "logit"),
+    data = dat
+  )
+  
+  # Residuals for continuous T2 confounders
+  res_bmi <- residuals(model_bmiT2)
+  
+  # Step 3: Simulate T2 confounders and predict counterfactual risk
+  predict_risk <- function(l1, l2) {
+    dat_sim <- dat
+    
+    dat_sim$pleT1 <- l1
+    dat_sim$pleT2 <- l2
+    
+    # Continuous T2 confounders
+    pred_bmi <- predict(model_bmiT2, newdata = dat_sim)
+    dat_sim$bmiT2 <- pred_bmi + sample(res_bmi, nrow(dat_sim), replace = TRUE)
+    
+    # Binary T2 confounders
+    probs_sdqbullied <- predict(model_sdqbulliedT2, newdata = dat_sim, type = "response")
+    dat_sim$sdqbulliedT2 <- rbinom(nrow(dat_sim), 1, probs_sdqbullied)
+    
+    probs_ideationlife <- predict(model_ideationlifeT2, newdata = dat_sim, type = "response")
+    dat_sim$ideationlifeT2 <- rbinom(nrow(dat_sim), 1, probs_ideationlife)
+    
+    # Mean predicted risk
+    mean(predict(outcome_model, newdata = dat_sim, type = "response"))
+  }
+  
+  p00 <- predict_risk(0, 0)
+  p01 <- predict_risk(0, 1)
+  p10 <- predict_risk(1, 0)
+  p11 <- predict_risk(1, 1)
+  
+  eps <- 1e-12
+  
+  RD_11 <- p11 - p00
+  RD_10 <- p10 - p00
+  RD_01 <- p01 - p00
+  
+  RR_11 <- p11 / (p00 + eps)
+  RR_10 <- p10 / (p00 + eps)
+  RR_01 <- p01 / (p00 + eps)
+  
+  c(
+    RD_11_vs_00 = RD_11,
+    RD_10_vs_00 = RD_10,
+    RD_01_vs_00 = RD_01,
+    RR_11_vs_00 = RR_11,
+    RR_10_vs_00 = RR_10,
+    RR_01_vs_00 = RR_01
+  )
+}
+
+
+# Bootstrap CIs
+
+bootstrap_estimator <- function(data, indices) {
+  
+  dat_bs <- data[indices, ]
+  
+  nice_gformula_estimator(dat_bs)
+}
+
+
+set.seed(2025)
+
+boot_res <- boot(
+  data = dat,
+  statistic = bootstrap_estimator,
+  R = num_bootstraps
+)
+
+# Bootstrap estimates
+all_boot <- boot_res$t
+
+colnames(all_boot) <- c(
+  "RD_11_vs_00",
+  "RD_10_vs_00",
+  "RD_01_vs_00",
+  "RR_11_vs_00",
+  "RR_10_vs_00",
+  "RR_01_vs_00"
+)
+
+# Point estimate from bootstrap means
+point_est <- colMeans(all_boot, na.rm = TRUE)
+
+final_point_estimates <- data.frame(
+  Contrast = contrasts,
+  RD = c(
+    point_est["RD_11_vs_00"],
+    point_est["RD_10_vs_00"],
+    point_est["RD_01_vs_00"]
+  ),
+  RR = c(
+    point_est["RR_11_vs_00"],
+    point_est["RR_10_vs_00"],
+    point_est["RR_01_vs_00"]
+  )
+)
+
+cat("POINT ESTIMATES from bootstrap means:\n")
+print(final_point_estimates, row.names = FALSE)
+
+# Percentile 95% CIs
+ci_tbl <- t(apply(all_boot, 2, function(x) {
+  c(
+    lower = unname(quantile(x, 0.025, na.rm = TRUE)),
+    upper = unname(quantile(x, 0.975, na.rm = TRUE))
+  )
+}))
+
+cat("\nBOOTSTRAP 95% CIs, percentile method:\n")
+print(round(ci_tbl, 4))
+
+
+## selfharm
+# Groups
+contrasts <- c("11_vs_00", "10_vs_00", "01_vs_00")
+scenarios <- list(
+  "11" = c(pleT1 = 1, pleT2 = 1),
+  "10" = c(pleT1 = 1, pleT2 = 0),
+  "01" = c(pleT1 = 0, pleT2 = 1),
+  "00" = c(pleT1 = 0, pleT2 = 0)
+)
+
+# Confounders
+t1_confounders <- "age + girl + iqT1 + bmiT1 + incomeT1 + living_arrangeT1 +
+    cohesionT1 + cbcl_lonelyT1 + sdqbulliedT1 + adhdT1 + selfharmT1"
+
+t2_confounders <- "bmiT2 + sdqbulliedT2 + selfharmT2"
+
+
+# Simulation
+nice_gformula_estimator <- function(dat) {
+  
+  # Step 1: Models for time-varying confounders at T2
+  model_bmiT2 <- glm(
+    as.formula(paste("bmiT2 ~ pleT1 +", t1_confounders)),
+    family = gaussian,
+    data = dat
+  )
+  
+  model_sdqbulliedT2 <- glm(
+    as.formula(paste("sdqbulliedT2 ~ pleT1 +", t1_confounders)),
+    family = binomial,
+    data = dat
+  )
+  
+  model_selfharmT2 <- glm(
+    as.formula(paste("selfharmT2 ~ pleT1 +", t1_confounders)),
+    family = binomial,
+    data = dat
+  )
+  
+  # Step 2: Outcome model
+  outcome_model <- glm(
+    as.formula(paste(
+      "selfharmT3 ~ pleT1 * pleT2 +",
+      t1_confounders,
+      "+",
+      t2_confounders
+    )),
+    family = binomial(link = "logit"),
+    data = dat
+  )
+  
+  # Residuals for continuous T2 confounders
+  res_bmi <- residuals(model_bmiT2)
+  
+  # Step 3: Simulate T2 confounders and predict counterfactual risk
+  predict_risk <- function(l1, l2) {
+    dat_sim <- dat
+    
+    dat_sim$pleT1 <- l1
+    dat_sim$pleT2 <- l2
+    
+    # Continuous T2 confounders
+    pred_bmi <- predict(model_bmiT2, newdata = dat_sim)
+    dat_sim$bmiT2 <- pred_bmi + sample(res_bmi, nrow(dat_sim), replace = TRUE)
+    
+    # Binary T2 confounders
+    probs_sdqbullied <- predict(model_sdqbulliedT2, newdata = dat_sim, type = "response")
+    dat_sim$sdqbulliedT2 <- rbinom(nrow(dat_sim), 1, probs_sdqbullied)
+    
+    probs_selfharm <- predict(model_selfharmT2, newdata = dat_sim, type = "response")
+    dat_sim$selfharmT2 <- rbinom(nrow(dat_sim), 1, probs_selfharm)
+    
+    # Mean predicted risk
+    mean(predict(outcome_model, newdata = dat_sim, type = "response"))
+  }
+  
+  p00 <- predict_risk(0, 0)
+  p01 <- predict_risk(0, 1)
+  p10 <- predict_risk(1, 0)
+  p11 <- predict_risk(1, 1)
+  
+  eps <- 1e-12
+  
+  RD_11 <- p11 - p00
+  RD_10 <- p10 - p00
+  RD_01 <- p01 - p00
+  
+  RR_11 <- p11 / (p00 + eps)
+  RR_10 <- p10 / (p00 + eps)
+  RR_01 <- p01 / (p00 + eps)
+  
+  c(
+    RD_11_vs_00 = RD_11,
+    RD_10_vs_00 = RD_10,
+    RD_01_vs_00 = RD_01,
+    RR_11_vs_00 = RR_11,
+    RR_10_vs_00 = RR_10,
+    RR_01_vs_00 = RR_01
+  )
+}
+
+
+# Bootstrap CIs
+
+bootstrap_estimator <- function(data, indices) {
+  
+  dat_bs <- data[indices, ]
+  
+  nice_gformula_estimator(dat_bs)
+}
+
+
+set.seed(2025)
+
+boot_res <- boot(
+  data = dat,
+  statistic = bootstrap_estimator,
+  R = num_bootstraps
+)
+
+# Bootstrap estimates
+all_boot <- boot_res$t
+
+colnames(all_boot) <- c(
+  "RD_11_vs_00",
+  "RD_10_vs_00",
+  "RD_01_vs_00",
+  "RR_11_vs_00",
+  "RR_10_vs_00",
+  "RR_01_vs_00"
+)
+
+# Point estimate from bootstrap means
+point_est <- colMeans(all_boot, na.rm = TRUE)
+
+final_point_estimates <- data.frame(
+  Contrast = contrasts,
+  RD = c(
+    point_est["RD_11_vs_00"],
+    point_est["RD_10_vs_00"],
+    point_est["RD_01_vs_00"]
+  ),
+  RR = c(
+    point_est["RR_11_vs_00"],
+    point_est["RR_10_vs_00"],
+    point_est["RR_01_vs_00"]
+  )
+)
+
+cat("POINT ESTIMATES from bootstrap means:\n")
+print(final_point_estimates, row.names = FALSE)
+
+# Percentile 95% CIs
+ci_tbl <- t(apply(all_boot, 2, function(x) {
+  c(
+    lower = unname(quantile(x, 0.025, na.rm = TRUE)),
+    upper = unname(quantile(x, 0.975, na.rm = TRUE))
+  )
+}))
+
+cat("\nBOOTSTRAP 95% CIs, percentile method:\n")
+print(round(ci_tbl, 4))
