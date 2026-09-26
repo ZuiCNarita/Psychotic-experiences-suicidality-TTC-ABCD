@@ -1,0 +1,173 @@
+library(missRanger)
+
+set.seed(11112)
+
+n <- 1000
+
+data <- data.frame(
+  SAMPLENUMBER = seq_len(n),
+  age = rnorm(n, 12, 1),
+  girl = rbinom(n, 1, 0.5),
+  iqT1 = rnorm(n, 100, 15),
+  bmiT1 = rnorm(n, 19, 3),
+  incomeT1 = sample(1:3, n, replace = TRUE),
+  living_arrangeT1 = rbinom(n, 1, 0.2),
+  cohesionT1 = rnorm(n, 10, 2),
+  cbcl_lonelyT1 = rbinom(n, 1, 0.2),
+  sdqbulliedT1 = rbinom(n, 1, 0.2),
+  adhdT1 = pmax(rnorm(n, 3, 2), 0)
+)
+
+data$ideationlifeT1 <- rbinom(
+  n, 1,
+  plogis(
+    -2.3 +
+      0.8 * data$cbcl_lonelyT1 +
+      0.7 * data$sdqbulliedT1 +
+      0.12 * data$adhdT1
+  )
+)
+
+data$selfharmT1 <- rbinom(
+  n, 1,
+  plogis(
+    -3.2 +
+      0.8 * data$cbcl_lonelyT1 +
+      0.7 * data$sdqbulliedT1 +
+      0.8 * data$ideationlifeT1
+  )
+)
+
+data$pleT1 <- rbinom(
+  n, 1,
+  plogis(
+    -1.1 +
+      0.6 * data$cbcl_lonelyT1 +
+      0.7 * data$sdqbulliedT1 +
+      0.12 * data$adhdT1 +
+      0.5 * data$ideationlifeT1 +
+      0.4 * data$selfharmT1
+  )
+)
+
+data$bmiT2 <- data$bmiT1 + rnorm(n, 0.5, 1)
+
+data$sdqbulliedT2 <- rbinom(
+  n, 1,
+  plogis(
+    -2.0 +
+      1.2 * data$sdqbulliedT1 +
+      0.5 * data$pleT1
+  )
+)
+
+data$ideationlifeT2 <- rbinom(
+  n, 1,
+  plogis(
+    -2.4 +
+      1.4 * data$ideationlifeT1 +
+      0.7 * data$pleT1 +
+      0.5 * data$sdqbulliedT2 +
+      0.4 * data$cbcl_lonelyT1
+  )
+)
+
+data$selfharmT2 <- rbinom(
+  n, 1,
+  plogis(
+    -3.3 +
+      1.5 * data$selfharmT1 +
+      0.7 * data$pleT1 +
+      0.7 * data$ideationlifeT2 +
+      0.4 * data$sdqbulliedT2
+  )
+)
+
+data$pleT2 <- rbinom(
+  n, 1,
+  plogis(
+    -1.6 +
+      1.6 * data$pleT1 +
+      0.5 * data$sdqbulliedT2 +
+      0.5 * data$ideationlifeT2 +
+      0.4 * data$selfharmT2 +
+      0.08 * data$adhdT1
+  )
+)
+
+data$ideationlifeT3 <- rbinom(
+  n, 1,
+  plogis(
+    -2.5 +
+      0.5 * data$pleT1 +
+      0.9 * data$pleT2 +
+      1.2 * data$ideationlifeT2 +
+      0.4 * data$sdqbulliedT2
+  )
+)
+
+data$selfharmT3 <- rbinom(
+  n, 1,
+  plogis(
+    -3.5 +
+      0.5 * data$pleT1 +
+      1.0 * data$pleT2 +
+      1.3 * data$selfharmT2 +
+      0.6 * data$ideationlifeT2
+  )
+)
+
+columnList <- c(
+  "pleT1","pleT2",
+  "age","girl","iqT1","bmiT1","incomeT1","living_arrangeT1",
+  "cohesionT1","cbcl_lonelyT1","sdqbulliedT1","adhdT1",
+  "ideationlifeT1","selfharmT1",
+  "bmiT2","sdqbulliedT2","ideationlifeT2","selfharmT2",
+  "ideationlifeT3","selfharmT3",
+  "SAMPLENUMBER"
+)
+
+set.seed(22222)
+
+for (v in setdiff(columnList, "SAMPLENUMBER")) {
+  data[sample(seq_len(n), round(0.05 * n)), v] <- NA
+}
+
+data_imputed <- data[, columnList]
+data_core <- data_imputed[, setdiff(names(data_imputed), "SAMPLENUMBER")]
+
+factor_vars <- c(
+  "pleT1","pleT2",
+  "girl","incomeT1","living_arrangeT1",
+  "cbcl_lonelyT1","sdqbulliedT1",
+  "ideationlifeT1","selfharmT1",
+  "sdqbulliedT2","ideationlifeT2",
+  "selfharmT2","ideationlifeT3","selfharmT3"
+)
+
+for (v in intersect(factor_vars, names(data_core))) {
+  data_core[[v]] <- as.factor(data_core[[v]])
+}
+
+data_completed_core <- missRanger(
+  data = data_core,
+  num.trees = 500,
+  maxiter = 10,
+  seed = 11112,
+  verbose = 1
+)
+
+data_completed <- cbind(
+  SAMPLENUMBER = data_imputed$SAMPLENUMBER,
+  data_completed_core
+)
+
+for (v in intersect(factor_vars, names(data_completed))) {
+  data_completed[[v]] <- as.integer(as.character(data_completed[[v]]))
+}
+
+write.csv(
+  data_completed,
+  "imputed_data.csv",
+  row.names = FALSE
+)
