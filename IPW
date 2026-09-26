@@ -1,0 +1,187 @@
+library(geepack)
+library(multcomp)
+
+dat <- read.csv("imputed_data.csv", fileEncoding = "CP932")
+
+### ple
+## ideationlife
+denA1 <- glm(
+  pleT1 ~ age + girl + iqT1 + bmiT1 + incomeT1 + living_arrangeT1 +
+    cohesionT1 + cbcl_lonelyT1 + sdqbulliedT1 + adhdT1 + ideationlifeT1,
+  family = binomial(),
+  data = dat
+)
+
+numA1 <- glm(
+  pleT1 ~ 1,
+  family = binomial(),
+  data = dat
+)
+
+denA1.pred <- predict(denA1, type = "response")
+numA1.pred <- predict(numA1, type = "response")
+
+eps <- 1e-6
+denA1.pred <- pmin(pmax(denA1.pred, eps), 1 - eps)
+numA1.pred <- pmin(pmax(numA1.pred, eps), 1 - eps)
+
+dat$wA1 <- ifelse(
+  dat$pleT1 == 1,
+  numA1.pred / denA1.pred,
+  (1 - numA1.pred) / (1 - denA1.pred)
+)
+
+dat$wA1_t <- pmin(dat$wA1, quantile(dat$wA1, 0.99, na.rm = TRUE))
+
+denA2 <- glm(
+  pleT2 ~ pleT1 + age + girl + iqT1 + bmiT1 + incomeT1 + living_arrangeT1 +
+    cohesionT1 + cbcl_lonelyT1 + sdqbulliedT1 + adhdT1 + ideationlifeT1 +
+    bmiT2 + sdqbulliedT2 + ideationlifeT2,
+  family = binomial(),
+  data = dat
+)
+
+numA2 <- glm(
+  pleT2 ~ pleT1,
+  family = binomial(),
+  data = dat
+)
+
+denA2.pred <- predict(denA2, type = "response")
+numA2.pred <- predict(numA2, type = "response")
+
+denA2.pred <- pmin(pmax(denA2.pred, eps), 1 - eps)
+numA2.pred <- pmin(pmax(numA2.pred, eps), 1 - eps)
+
+dat$wA2 <- ifelse(
+  dat$pleT2 == 1,
+  numA2.pred / denA2.pred,
+  (1 - numA2.pred) / (1 - denA2.pred)
+)
+
+dat$wA2_t <- pmin(dat$wA2, quantile(dat$wA2, 0.99, na.rm = TRUE))
+
+dat$fw <- dat$wA1_t * dat$wA2_t
+
+msm <- geeglm(
+  ideationlifeT3 ~ pleT1 * pleT2,
+  weights = fw,
+  std.err = "san.se",
+  id = SAMPLENUMBER,
+  family = binomial(),
+  data = dat
+)
+
+K <- glht(
+  msm,
+  linfct = c(
+    OR_11_vs_00 = "pleT1 + pleT2 + pleT1:pleT2 = 0",
+    OR_10_vs_00 = "pleT1 = 0",
+    OR_01_vs_00 = "pleT2 = 0"
+  )
+)
+
+s  <- summary(K)
+ci <- confint(K)
+
+out <- data.frame(
+  contrast    = names(coef(K)),
+  log_est     = coef(K),
+  log_se      = s$test$sigma,
+  OR          = exp(coef(K)),
+  CI_lower_OR = exp(ci$confint[, "lwr"]),
+  CI_upper_OR = exp(ci$confint[, "upr"])
+)
+
+print(out)
+
+## selfharm
+denA1 <- glm(
+  pleT1 ~ age + girl + iqT1 + bmiT1 + incomeT1 + living_arrangeT1 +
+    cohesionT1 + cbcl_lonelyT1 + sdqbulliedT1 + adhdT1 + selfharmT1,
+  family = binomial(),
+  data = dat
+)
+
+numA1 <- glm(
+  pleT1 ~ 1,
+  family = binomial(),
+  data = dat
+)
+
+denA1.pred <- predict(denA1, type = "response")
+numA1.pred <- predict(numA1, type = "response")
+
+eps <- 1e-6
+denA1.pred <- pmin(pmax(denA1.pred, eps), 1 - eps)
+numA1.pred <- pmin(pmax(numA1.pred, eps), 1 - eps)
+
+dat$wA1 <- ifelse(
+  dat$pleT1 == 1,
+  numA1.pred / denA1.pred,
+  (1 - numA1.pred) / (1 - denA1.pred)
+)
+
+dat$wA1_t <- pmin(dat$wA1, quantile(dat$wA1, 0.99, na.rm = TRUE))
+
+denA2 <- glm(
+  pleT2 ~ pleT1 + age + girl + iqT1 + bmiT1 + incomeT1 + living_arrangeT1 +
+    cohesionT1 + cbcl_lonelyT1 + sdqbulliedT1 + adhdT1 + selfharmT1 +
+    bmiT2 + sdqbulliedT2 + selfharmT2,
+  family = binomial(),
+  data = dat
+)
+
+numA2 <- glm(
+  pleT2 ~ pleT1,
+  family = binomial(),
+  data = dat
+)
+
+denA2.pred <- predict(denA2, type = "response")
+numA2.pred <- predict(numA2, type = "response")
+
+denA2.pred <- pmin(pmax(denA2.pred, eps), 1 - eps)
+numA2.pred <- pmin(pmax(numA2.pred, eps), 1 - eps)
+
+dat$wA2 <- ifelse(
+  dat$pleT2 == 1,
+  numA2.pred / denA2.pred,
+  (1 - numA2.pred) / (1 - denA2.pred)
+)
+
+dat$wA2_t <- pmin(dat$wA2, quantile(dat$wA2, 0.99, na.rm = TRUE))
+
+dat$fw <- dat$wA1_t * dat$wA2_t
+
+msm <- geeglm(
+  selfharmT3 ~ pleT1 * pleT2,
+  weights = fw,
+  std.err = "san.se",
+  id = SAMPLENUMBER,
+  family = binomial(),
+  data = dat
+)
+
+K <- glht(
+  msm,
+  linfct = c(
+    OR_11_vs_00 = "pleT1 + pleT2 + pleT1:pleT2 = 0",
+    OR_10_vs_00 = "pleT1 = 0",
+    OR_01_vs_00 = "pleT2 = 0"
+  )
+)
+
+s  <- summary(K)
+ci <- confint(K)
+
+out <- data.frame(
+  contrast    = names(coef(K)),
+  log_est     = coef(K),
+  log_se      = s$test$sigma,
+  OR          = exp(coef(K)),
+  CI_lower_OR = exp(ci$confint[, "lwr"]),
+  CI_upper_OR = exp(ci$confint[, "upr"])
+)
+
+print(out)
